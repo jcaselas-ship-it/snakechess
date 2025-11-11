@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Serpiente de Ajedrez con Niveles</title>
+    
+    <!-- Carga de Font Awesome 5.15.4 para los iconos de ajedrez y obstáculos -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    
+    <!-- Carga de Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Carga de Tone.js (Sintetizador de audio) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js"></script>
+    <!-- Configuración de Tailwind para usar un color temático -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        // Colores personalizados del tablero 
+                        'snake-green': '#38a169',
+                        'accent-yellow': '#f6ad55',
+                        'obstacle-color': '#718096', // Gris para obstáculos
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Usamos Inter como fuente principal */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1a202c; /* Fondo oscuro */
+        }
+        .board-container {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            grid-template-rows: repeat(8, 1fr);
+            /* CRUCIAL: Asegura que el tablero sea cuadrado y no se desborde */
+            aspect-ratio: 1 / 1; 
+            max-width: 90vmin; /* Max width basado en el viewport (90% del menor entre ancho/alto) */
+            margin: auto;
+            border: 4px solid #4a5568;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.7); 
+        }
+        .cell {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            /* CRUCIAL: Tamaño de fuente adaptativo para tocar */
+            font-size: clamp(20px, 6vw, 45px); 
+            font-weight: 700;
+            transition: background-color 0.1s;
+            cursor: pointer; /* Indica que la celda es interactiva */
+        }
+        
+        /* ESTILOS DE TABLERO */
+        .light {
+            background-color: #d1d5db; /* Gris claro suave (Gray-300) */
+        }
+        .dark {
+            background-color: #3b82f6; /* Azul real (Blue-500) */
+        }
+        
+        .snake-head {
+            background-color: #2b6cb0 !important; /* Azul oscuro para la cabeza */
+            box-shadow: inset 0 0 0 4px #fff; /* Borde blanco para mayor visibilidad */
+            color: white; 
+        }
+        .snake-body {
+            background-color: var(--tw-colors-snake-green) !important;
+            color: white; 
+        }
+
+        /* NUEVO ESTILO: Obstáculos */
+        .obstacle {
+            background-color: var(--tw-colors-obstacle-color) !important;
+            color: #333;
+            animation: pulse-obstacle 1.5s infinite alternate; /* Animación sutil */
+        }
+        @keyframes pulse-obstacle {
+            from { opacity: 0.9; }
+            to { opacity: 1; }
+        }
+        
+        .collectible-piece {
+            transition: transform 0.2s;
+        }
+        .collectible-piece:hover {
+            transform: scale(1.1);
+        }
+        /* Color por defecto de las piezas coleccionables */
+        .collectible-piece i {
+            color: #333; /* Iconos negros por defecto */
+        }
+
+        /* Estilos de botones para un look más de juego */
+        .game-button {
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            font-weight: bold;
+            transition: transform 0.1s, box-shadow 0.1s;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+            user-select: none; /* Previene selección de texto en táctil */
+            -webkit-tap-highlight-color: transparent; /* Elimina el efecto de toque */
+        }
+        .game-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 8px -2px rgba(0, 0, 0, 0.6);
+        }
+        .game-button:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px -1px rgba(0, 0, 0, 0.4);
+        }
+        
+        /* D-Pad para móviles: Aumentar el tamaño del target táctil */
+        .dpad-button {
+            width: 70px; /* Tamaño más grande para el tacto */
+            height: 70px;
+        }
+
+        /* Overlay y Modal */
+        .game-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(5px);
+            z-index: 100;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        /* Animación de Confeti */
+        #game-over-modal > div {
+            position: relative; 
+            overflow: visible; 
+        }
+        .confetti-particle {
+            pointer-events: none;
+            z-index: 101;
+            animation: confetti-fall 2s ease-out forwards;
+            position: absolute;
+            opacity: 0; 
+        }
+        
+        @keyframes confetti-fall {
+            0% {
+                opacity: 1;
+                transform: translateY(0px) rotate(0deg);
+            }
+            100% {
+                opacity: 0;
+                transform: translateY(400px) rotate(360deg); 
+            }
+        }
+    </style>
+</head>
+<body class="p-4 sm:p-8 flex flex-col items-center min-h-screen">
+
+    <!-- Contenedor principal con ancho máximo para desktop, pero flexible en mobile -->
+    <div class="max-w-4xl w-full">
+        <!-- Contenedor del Título Centrado -->
+        <div class="mb-6 text-center">
+            <h1 class="text-4xl sm:text-5xl font-extrabold text-white">Serpiente de Ajedrez</h1>
+        </div>
+        
+        <!-- WRAPPER: Alinea Scoreboard, Tablero y Controles con el max-width del tablero (90vmin) -->
+        <div class="mx-auto w-full" style="max-width: 90vmin;">
+            
+            <!-- Contenedor del Scoreboard (Flex en una sola fila) -->
+            <div class="flex justify-between items-center bg-gray-700 p-3 sm:p-4 rounded-lg shadow-xl mb-6 space-x-2 sm:space-x-4">
+                
+                <!-- Nivel Actual -->
+                <div class="bg-gray-800 p-2 sm:p-3 rounded-md w-1/4 text-center min-w-[80px]">
+                    <p class="text-xs font-semibold text-accent-yellow uppercase whitespace-nowrap">Nivel</p>
+                    <p id="level-display" class="text-2xl sm:text-3xl font-bold text-white">1</p>
+                </div>
+
+                <!-- Puntuación -->
+                <div class="bg-gray-800 p-2 sm:p-3 rounded-md w-1/4 text-center min-w-[80px]">
+                    <p class="text-xs font-semibold text-accent-yellow uppercase whitespace-nowrap">Puntos</p>
+                    <p id="score-display" class="text-2xl sm:text-3xl font-bold text-white">0</p>
+                </div>
+
+                <!-- Botones de Instrucciones y Sonido -->
+                <div class="flex space-x-2 justify-center items-center w-1/4">
+                    <!-- Botón de Instrucciones -->
+                    <button id="instructions-toggle-button" onclick="toggleInstructions()" class="game-button bg-gray-600 text-white hover:bg-gray-500 p-2 rounded-full h-10 w-10 sm:h-12 sm:w-12 flex items-center justify-center">
+                        <i class="fas fa-info text-md sm:text-xl"></i>
+                    </button>
+                    <!-- Botón de Sonido ON/OFF -->
+                    <button id="sound-toggle-button" onclick="toggleSound()" class="game-button bg-gray-600 text-white hover:bg-gray-500 p-2 rounded-full h-10 w-10 sm:h-12 sm:w-12 flex items-center justify-center">
+                        <i id="sound-icon" class="fas fa-volume-up text-md sm:text-xl"></i>
+                    </button>
+                </div>
+
+                <!-- Próximo Objetivo -->
+                <div class="bg-gray-800 p-2 sm:p-3 rounded-md w-1/4 text-center min-w-[80px]">
+                    <p class="text-xs font-semibold text-accent-yellow uppercase whitespace-nowrap">Objetivo</p>
+                    <p id="next-piece-display" class="text-2xl sm:text-3xl font-bold text-white"><i class="fas fa-chess-pawn"></i></p>
+                </div>
+            </div>
+
+            <!-- Contenedor del Juego (Tablero y Modales) -->
+            <div id="game-container" class="relative w-full">
+                <div id="chessboard" class="board-container">
+                    <!-- Las celdas se generarán aquí con JavaScript -->
+                </div>
+                
+                <!-- Modal de Inicio de Juego (ESTÉTICA MEJORADA) -->
+                <div id="start-modal" class="game-overlay">
+                    <!-- Cambio de bg-white a bg-gray-800 y ajuste de colores de texto -->
+                    <div class="bg-gray-800 p-8 rounded-xl shadow-2xl text-center max-w-xs sm:max-w-sm mx-4 border-2 border-accent-yellow">
+                        <!-- Ícono: Cambiado a accent-yellow para que combine con el tema -->
+                        <i class="fas fa-chess-king text-6xl text-accent-yellow mb-4 animate-pulse"></i>
+                        <h2 class="text-3xl font-extrabold text-white mb-4">¡BIENVENIDO!</h2>
+                        <p class="text-md text-gray-300 mb-4">Recoge las piezas en orden para formar la serpiente.</p>
+                        
+                        <!-- Selector de Velocidad -->
+                        <div class="mb-6 flex flex-col items-center justify-center space-y-2">
+                            <label for="speed-selector" class="font-medium text-gray-300 flex items-center space-x-2">
+                                <i class="fas fa-tachometer-alt text-xl text-accent-yellow"></i>
+                                <span>Velocidad de Juego:</span>
+                            </label>
+                            <!-- Estilo del selector ajustado para tema oscuro -->
+                            <!-- VALORES DE VELOCIDAD ACTUALIZADOS -->
+                            <select id="speed-selector" class="px-4 py-2 border border-gray-600 rounded-md shadow-sm focus:ring-snake-green focus:border-snake-green w-full sm:w-auto bg-gray-700 text-white">
+                                <option value="0">Paso a Paso (Manual)</option>
+                                <option value="800">Lento (800 ms)</option>
+                                <option value="600" selected>Normal (600 ms)</option>
+                                <option value="400">Rápido (400 ms)</option>
+                            </select>
+                        </div>
+
+                        <!-- Botón de Inicio: Usa snake-green -->
+                        <button onclick="startGame()" class="game-button bg-snake-green text-white hover:bg-green-700 w-full text-xl shadow-lg shadow-green-900/50">Empezar Juego</button>
+                    </div>
+                </div>
+
+                <!-- Modal de Juego Terminado/Nivel Completado -->
+                <div id="game-over-modal" class="game-overlay hidden">
+                    <div class="bg-white p-8 rounded-xl shadow-2xl text-center max-w-xs sm:max-w-sm mx-4">
+                        <h2 id="game-result-title" class="text-4xl font-extrabold text-gray-900 mb-4"></h2>
+                        <p id="level-transition-message" class="text-lg font-semibold text-gray-700 mb-2 hidden"></p>
+                        <p class="text-xl text-gray-600 mb-6">Puntuación Final: <span id="final-score" class="font-bold text-indigo-600"></span></p>
+                        <p id="game-message" class="text-md text-gray-700 mb-6"></p>
+                        <button id="next-level-button" onclick="nextLevel()" class="game-button bg-green-600 text-white hover:bg-green-700 w-full mb-3 hidden">Nivel Siguiente</button>
+                        <button id="restart-game-button" onclick="resetToStartScreen()" class="game-button bg-indigo-600 text-white hover:bg-indigo-700 w-full">Volver a Pantalla de Inicio</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Botones de Reinicio -->
+            <div class="mt-6 flex justify-center space-x-4">
+                <!-- NUEVO BOTÓN: Volver a Pantalla de Inicio y Cambiar Velocidad -->
+                <button onclick="resetToStartScreen()" class="game-button bg-blue-600 text-white hover:bg-blue-700 p-3 rounded-full h-14 w-14 flex items-center justify-center shadow-lg transform transition-transform duration-150 ease-in-out hover:scale-105" title="Volver a Pantalla de Inicio y Cambiar Velocidad">
+                    <i class="fas fa-home text-xl"></i>
+                </button>
+                <!-- BOTÓN EXISTENTE: Reinicio Rápido -->
+                <button onclick="initGame(state.currentLevel, true)" class="game-button bg-red-600 text-white hover:bg-red-700 p-3 rounded-full h-14 w-14 flex items-center justify-center shadow-lg transform transition-transform duration-150 ease-in-out hover:scale-105" title="Reiniciar Nivel Rápido">
+                    <i class="fas fa-redo-alt text-xl"></i>
+                </button>
+            </div>
+
+            <!-- Instrucciones y Controles (Bloque Expandible) -->
+            <div id="instructions-box" class="mt-6 p-4 bg-gray-700 rounded-lg shadow-xl hidden">
+                <h3 class="text-xl font-bold text-white mb-3">Controles e Instrucciones</h3>
+                <p class="text-gray-300 mb-3">Mueve la cabeza de la serpiente (pieza azul) con las <span class="font-mono text-accent-yellow">teclas de flecha (↑ ↓ ← →)</span> o <span class="font-mono text-accent-yellow font-bold">tocando/clicando una casilla adyacente</span> (como un Rey).</p>
+                <p class="text-gray-300 mb-3">Recoge las piezas en el orden indicado en <span class="font-semibold text-accent-yellow">Objetivo</span>. La serpiente crece al recoger una pieza. Evita chocar contra tu propio cuerpo o los **obstáculos grises**.</p>
+                <p class="text-gray-300 font-bold">Al llegar al borde, la serpiente se teletransportará al lado opuesto (wrap-around).</p>
+                <p class="text-gray-300 font-bold">En modo automático, la <span class="font-mono text-accent-yellow">Barra Espaciadora</span> pausa/reanuda el juego.</p>
+
+                <!-- D-Pad para móviles: Aumentado y bien espaciado -->
+                <div class="flex justify-center mt-6 sm:hidden">
+                    <div class="grid grid-cols-3 gap-3">
+                        <div class="col-span-1"></div>
+                        <button class="dpad-button bg-gray-600 text-white rounded-lg game-button flex items-center justify-center text-2xl" onclick="setDirection(0, -1)">↑</button>
+                        <div class="col-span-1"></div>
+
+                        <button class="dpad-button bg-gray-600 text-white rounded-lg game-button flex items-center justify-center text-2xl" onclick="setDirection(-1, 0)">←</button>
+                        <button class="dpad-button bg-gray-800 text-white rounded-lg game-button flex items-center justify-center text-2xl" onclick="setDirection(0, 0)">⏸</button>
+                        <button class="dpad-button bg-gray-600 text-white rounded-lg game-button flex items-center justify-center text-2xl" onclick="setDirection(1, 0)">→</button>
+
+                        <div class="col-span-1"></div>
+                        <button class="dpad-button bg-gray-600 text-white rounded-lg game-button flex items-center justify-center text-2xl" onclick="setDirection(0, 1)">↓</button>
+                        <div class="col-span-1"></div>
+                    </div>
+                </div>
+            </div>
+            
+        </div>
+        <!-- FIN DEL WRAPPER DE ALINEACIÓN -->
+    </div>
+
+    <script>
+        const BOARD_SIZE = 8;
+        
+        // Símbolos de Font Awesome
+        const PIECE_SYMBOLS = {
+            PAWN: '<i class="fas fa-chess-pawn"></i>',
+            KNIGHT: '<i class="fas fa-chess-knight"></i>',
+            BISHOP: '<i class="fas fa-chess-bishop"></i>',
+            ROOK: '<i class="fas fa-chess-rook"></i>',
+            QUEEN: '<i class="fas fa-chess-queen"></i>',
+            KING: '<i class="fas fa-chess-king"></i>',
+            ROCK: '<i class="fas fa-times-circle"></i>' // Obstáculo: Roca o Muro
+        };
+
+        const PIECE_QUEUE_DEFINITION = [
+            { type: PIECE_SYMBOLS.PAWN, count: 4, score: 10 },
+            { type: PIECE_SYMBOLS.KNIGHT, count: 2, score: 30 },
+            { type: PIECE_SYMBOLS.BISHOP, count: 2, score: 30 },
+            { type: PIECE_SYMBOLS.ROOK, count: 2, score: 50 },
+            { type: PIECE_SYMBOLS.QUEEN, count: 1, score: 90 },
+            { type: PIECE_SYMBOLS.KING, count: 1, score: 100 }
+        ];
+
+        // --- NUEVA DEFINICIÓN DE NIVELES CON OBSTÁCULOS ---
+        const LEVEL_CONFIG = {
+            1: { // Nivel 1: Juego base (sin obstáculos)
+                obstacles: [],
+                message: "¡Bienvenido! Es hora de aprender a serpentear.",
+                nextLevel: 2 
+            },
+            2: { // Nivel 2: Rocas Inamovibles (4 Obstáculos)
+                obstacles: [
+                    {x: 2, y: 2}, {x: 5, y: 2},
+                    {x: 2, y: 5}, {x: 5, y: 5},
+                ],
+                message: "¡Cuidado con las Rocas! Ahora hay obstáculos fijos.",
+                nextLevel: 3 
+            },
+            3: { // Nivel 3: Muros en Esquinas (8 Obstáculos)
+                obstacles: [
+                    {x: 0, y: 0}, {x: 0, y: 1}, {x: 1, y: 0}, 
+                    {x: 7, y: 0}, {x: 7, y: 1}, {x: 6, y: 0}, 
+                    {x: 0, y: 7}, {x: 1, y: 7}, {x: 0, y: 6}, 
+                    {x: 7, y: 7}, {x: 6, y: 7}, {x: 7, y: 6}
+                ],
+                message: "Las esquinas están bloqueadas. ¡Planifica tu ruta!",
+                nextLevel: 4 
+            },
+            4: { // Nivel 4: Bloqueo Central (10 Obstáculos)
+                obstacles: [
+                    {x: 2, y: 3}, {x: 3, y: 2}, {x: 4, y: 2}, {x: 5, y: 3},
+                    {x: 2, y: 4}, {x: 5, y: 4},
+                    {x: 3, y: 5}, {x: 4, y: 5},
+                    {x: 0, y: 0}, {x: 7, y: 7} // Mantener 2 obstáculos de los niveles anteriores
+                ],
+                message: "El centro está obstruido. ¡Mucho cuidado!",
+                nextLevel: 5 
+            },
+            5: { // Nivel final por ahora
+                obstacles: [
+                    {x: 1, y: 1}, {x: 6, y: 1},
+                    {x: 1, y: 6}, {x: 6, y: 6},
+                    {x: 3, y: 3}, {x: 4, y: 4}, {x: 3, y: 4}, {x: 4, y: 3},
+                ],
+                message: "¡Nivel Máximo alcanzado! Eres un maestro.",
+                nextLevel: null 
+            }
+            // Agrega más niveles aquí
+        };
+
+        let state = {
+            currentLevel: 1, // Nuevo: Nivel actual
+            obstacles: [],   // Nuevo: Posiciones de los obstáculos
+        };
+        let gameInterval;
+        let pendingDirection = { x: 1, y: 0 }; 
+        let currentDirection = { x: 1, y: 0 };
+        let isPaused = true; 
+        let isStarted = false; 
+        let soundOn = true; 
+        
+        // Elementos del DOM
+        const soundIcon = document.getElementById('sound-icon');
+        const instructionsBox = document.getElementById('instructions-box'); 
+        const levelDisplay = document.getElementById('level-display'); // Nuevo elemento DOM
+
+        // Tone.js Variables
+        let synth;
+        
+        function setupAudio() {
+            if (!synth) {
+                // Configuración de audio (igual que antes)
+                const reverb = new Tone.Reverb({
+                    decay: 4,
+                    preDelay: 0.05
+                }).toDestination();
+
+                const delay = new Tone.FeedbackDelay({
+                    delayTime: "8n",
+                    feedback: 0.5,
+                    wet: 0.2
+                }).connect(reverb);
+                
+                synth = new Tone.PolySynth(Tone.Synth, {
+                    oscillator: { type: "sine" },
+                    envelope: { attack: 0.01, decay: 0.5, sustain: 0.1, release: 1 }
+                }).connect(delay);
+
+                Tone.start();
+            }
+        }
+        
+        function toggleSound() {
+            setupAudio(); 
+            soundOn = !soundOn;
+            Tone.Master.mute = !soundOn;
+            
+            if (soundOn) {
+                soundIcon.className = 'fas fa-volume-up text-md sm:text-xl'; 
+            } else {
+                soundIcon.className = 'fas fa-volume-off text-md sm:text-xl'; 
+            }
+        }
+
+        function toggleInstructions() {
+            instructionsBox.classList.toggle('hidden');
+        }
+        
+        function playCollectSound() {
+            if (!soundOn || !synth) return;
+            const now = Tone.now();
+            synth.triggerAttackRelease(["C4", "E4", "G4"], "8n", now);
+        }
+
+        function playGameOverSound() {
+            if (!soundOn || !synth) return;
+            const now = Tone.now();
+            synth.triggerAttackRelease(["C2", "F#2", "B2"], "1n", now, 0.5); 
+        }
+        
+        function playWinSound() {
+            if (!soundOn || !synth) return;
+            const now = Tone.now();
+            synth.triggerAttackRelease(["E5", "G#5", "B5"], "4n", now);
+            synth.triggerAttackRelease(["F#5", "A#5", "C#6"], "4n", now + 0.3); 
+        }
+
+        // Elementos del DOM (igual que antes)
+        const boardElement = document.getElementById('chessboard');
+        const scoreDisplay = document.getElementById('score-display');
+        const nextPieceDisplay = document.getElementById('next-piece-display');
+        const startModal = document.getElementById('start-modal'); 
+        const gameOverModal = document.getElementById('game-over-modal');
+        const finalScoreDisplay = document.getElementById('final-score');
+        const gameResultTitle = document.getElementById('game-result-title');
+        const gameMessage = document.getElementById('game-message');
+        const speedSelector = document.getElementById('speed-selector');
+        // Nuevos elementos para el modal de fin de juego/nivel
+        const nextLevelButton = document.getElementById('next-level-button');
+        const restartGameButton = document.getElementById('restart-game-button');
+        const levelTransitionMessage = document.getElementById('level-transition-message');
+
+
+        // Modificada para aceptar el nivel y si es un reinicio rápido
+        function initGame(level = 1, quickRestart = false) {
+            // 1. Establecer el nivel
+            state.currentLevel = level;
+            const levelConfig = LEVEL_CONFIG[state.currentLevel] || LEVEL_CONFIG[1];
+            state.obstacles = levelConfig.obstacles;
+
+            // 2. Inicialización de estado
+            state.snake = [
+                { x: 3, y: 4, type: PIECE_SYMBOLS.PAWN },
+                { x: 2, y: 4, type: PIECE_SYMBOLS.PAWN },
+            ];
+            state.pieceQueue = PIECE_QUEUE_DEFINITION.flatMap(def => Array(def.count).fill(def.type)),
+            state.collectiblePositions = [];
+            state.score = state.score || 0; // Mantener score en reinicio rápido o subir de nivel
+            state.isGameOver = false;
+            state.collectedCount = 0;
+            state.growSegments = 0; 
+            
+            pendingDirection = { x: 1, y: 0 }; 
+            currentDirection = { x: 1, y: 0 };
+            isPaused = true;
+            
+            // 3. Obtener posiciones ocupadas y prohibidas
+            const head = state.snake[0];
+            const initialForbiddenPos = {
+                x: head.x + pendingDirection.x,
+                y: head.y + pendingDirection.y
+            };
+            
+            // 4. Inicializar piezas
+            initializeCollectiblePieces(initialForbiddenPos);
+
+            // 5. Renderizar y actualizar
+            renderBoard();
+            updateScoreboard();
+
+            clearInterval(gameInterval);
+            gameOverModal.classList.add('hidden');
+            
+            // 6. Gestionar el inicio
+            if (!isStarted && !quickRestart) {
+                startModal.classList.remove('hidden');
+            } else {
+                startModal.classList.add('hidden');
+                const speed = parseInt(speedSelector.value);
+                if (speed > 0) {
+                    gameInterval = setInterval(gameLoop, speed);
+                    isPaused = false;
+                } else {
+                    isPaused = true;
+                }
+            }
+        }
+
+        function startGame() {
+            setupAudio(); 
+            
+            isStarted = true;
+            startModal.classList.add('hidden');
+            gameOverModal.classList.add('hidden');
+            
+            const speed = parseInt(speedSelector.value);
+            
+            isPaused = (speed === 0); 
+            
+            clearInterval(gameInterval);
+            
+            // Si la velocidad es 0 (manual), no se inicia el intervalo.
+            if (speed > 0) {
+                gameInterval = setInterval(gameLoop, speed);
+            }
+            // Si iniciamos desde la pantalla de inicio, reseteamos el nivel al 1
+            initGame(1, true); 
+        }
+
+        // Modificada para evitar generar piezas sobre obstáculos
+        function initializeCollectiblePieces(forbiddenPos) {
+            const occupied = new Set(
+                state.snake.map(p => `${p.x},${p.y}`)
+                .concat(state.obstacles.map(p => `${p.x},${p.y}`)) // Añadir obstáculos a ocupados
+            );
+            
+            if (forbiddenPos) {
+                if (forbiddenPos.x >= 0 && forbiddenPos.x < BOARD_SIZE &&
+                    forbiddenPos.y >= 0 && forbiddenPos.y < BOARD_SIZE) {
+                    occupied.add(`${forbiddenPos.x},${forbiddenPos.y}`);
+                }
+            }
+
+            const piecesToPlace = [...state.pieceQueue]; 
+
+            for (const pieceType of piecesToPlace) {
+                let x, y;
+                let attempts = 0;
+                do {
+                    x = Math.floor(Math.random() * BOARD_SIZE);
+                    y = Math.floor(Math.random() * BOARD_SIZE);
+                    attempts++;
+                    if (attempts > 100) { 
+                        console.error("No se pudo colocar la pieza. Tablero demasiado lleno.");
+                        break; 
+                    }
+                } while (occupied.has(`${x},${y}`));
+                
+                occupied.add(`${x},${y}`);
+                state.collectiblePositions.push({ x, y, type: pieceType });
+            }
+        }
+
+        function setDirection(x, y) {
+            const speed = parseInt(speedSelector.value);
+            
+            if (!isStarted || state.isGameOver) return;
+
+            // Lógica para modos continuos (speed > 0)
+            if (speed > 0) {
+                if (isPaused && (x !== 0 || y !== 0)) {
+                    togglePause(false);
+                } else if (x === 0 && y === 0) {
+                    togglePause(!isPaused);
+                    return; 
+                }
+            }
+            
+            if (currentDirection.x * -1 !== x || currentDirection.y * -1 !== y) {
+                pendingDirection = { x, y };
+            }
+            
+            // Lógica para modo Manual (speed === 0)
+            if (speed === 0 && (x !== 0 || y !== 0)) {
+                gameLoop(); 
+            }
+        }
+        
+        function togglePause(pauseState) {
+            if (!isStarted || state.isGameOver) return;
+
+            const speed = parseInt(speedSelector.value); 
+            if (speed === 0) return; 
+
+            isPaused = pauseState;
+            
+            if (isPaused) {
+                clearInterval(gameInterval);
+            } else {
+                clearInterval(gameInterval);
+                gameInterval = setInterval(gameLoop, speed);
+            }
+        }
+
+        // --- FUNCIÓN DE CONTROL POR CLIC/TOUCH ---
+        function handleCellClick(clickedX, clickedY) {
+            if (!isStarted || state.isGameOver) return; 
+
+            const head = state.snake[0];
+            let dx = clickedX - head.x;
+            let dy = clickedY - head.y;
+
+            // Normalizar las diferencias para wrap-around
+            if (dx === BOARD_SIZE - 1) dx = -1;
+            else if (dx === -(BOARD_SIZE - 1)) dx = 1;
+            
+            if (dy === BOARD_SIZE - 1) dy = -1;
+            else if (dy === -(BOARD_SIZE - 1)) dy = 1;
+
+            // Verificar si el movimiento es de un solo paso (como un Rey)
+            if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1 && (dx !== 0 || dy !== 0)) {
+                setDirection(dx, dy);
+            }
+        }
+
+        function handleKeyPress(event) {
+            if (!isStarted && event.key !== ' ' && event.key !== 'i') return;
+            
+            const speed = parseInt(speedSelector.value);
+
+            switch (event.key) {
+                case 'ArrowUp':
+                    setDirection(0, -1);
+                    break;
+                case 'ArrowDown':
+                    setDirection(0, 1);
+                    break;
+                case 'ArrowLeft':
+                    setDirection(-1, 0);
+                    break;
+                case 'ArrowRight':
+                    setDirection(1, 0);
+                    break;
+                case ' ': 
+                    event.preventDefault(); 
+                    if (speed > 0) { 
+                        togglePause(!isPaused);
+                    }
+                    break;
+                case 'i': 
+                    toggleInstructions();
+                    break;
+            }
+        }
+
+        function gameLoop() {
+            const speed = parseInt(speedSelector.value);
+            if (state.isGameOver || (speed > 0 && isPaused)) return; 
+
+            currentDirection = pendingDirection;
+            const head = state.snake[0];
+            
+            // 1. Calcular la próxima posición de la cabeza
+            let nextX = head.x + currentDirection.x;
+            let nextY = head.y + currentDirection.y;
+
+            // 2. Aplicar WRAP-AROUND (teletransporte)
+            if (nextX < 0) {
+                nextX = BOARD_SIZE - 1;
+            } else if (nextX >= BOARD_SIZE) {
+                nextX = 0;
+            }
+
+            if (nextY < 0) {
+                nextY = BOARD_SIZE - 1;
+            } else if (nextY >= BOARD_SIZE) {
+                nextY = 0;
+            }
+
+            // 3. Definir la nueva cabeza
+            const newHead = {
+                x: nextX,
+                y: nextY,
+                type: head.type 
+            };
+            
+            // 4. Comprobar colisión con OBSTÁCULOS (NUEVO)
+            const hitObstacle = state.obstacles.some(
+                obs => obs.x === newHead.x && obs.y === newHead.y
+            );
+
+            if (hitObstacle) {
+                endGame(false, "¡Chocaste contra una roca!");
+                return;
+            }
+
+            // 5. Comprobar colisión con el cuerpo 
+            for (let i = 1; i < state.snake.length; i++) {
+                if (newHead.x === state.snake[i].x && newHead.y === state.snake[i].y) {
+                    endGame(false, "¡Te mordiste a ti mismo!");
+                    return;
+                }
+            }
+
+            // 6. Mover la serpiente
+            state.snake.unshift(newHead); 
+
+            // 7. Comprobar recolección de pieza
+            const collectedIndex = state.collectiblePositions.findIndex(
+                p => p.x === newHead.x && p.y === newHead.y
+            );
+            
+            let pieceCollected = false;
+
+            if (collectedIndex !== -1) {
+                const collectedPiece = state.collectiblePositions[collectedIndex];
+                const pieceType = collectedPiece.type;
+                
+                const nextTargetType = state.pieceQueue[state.collectedCount];
+
+                if (pieceType === nextTargetType) {
+                    
+                    // a) Recolección exitosa
+                    playCollectSound(); 
+                    pieceCollected = true;
+                    state.collectedCount++;
+                    state.growSegments++;
+                    
+                    state.collectiblePositions.splice(collectedIndex, 1);
+
+                    const def = PIECE_QUEUE_DEFINITION.find(d => d.type === pieceType);
+                    const pieceScore = def ? def.score : 0;
+                    state.score += pieceScore;
+                    
+                } else {
+                    // b) Colisión con una pieza incorrecta (pierde el juego)
+                    endGame(false, `¡Recogiste la pieza incorrecta! Debías recoger la pieza objetivo.`);
+                    return;
+                }
+            }
+
+            // 8. Quitar la cola (a menos que haya crecido)
+            if (!pieceCollected) {
+                state.snake.pop();
+            }
+            
+            // 9. Comprobar condición de victoria (Fin del Nivel)
+            if (state.collectedCount === state.pieceQueue.length) {
+                
+                // Si hay un nivel siguiente definido
+                if (LEVEL_CONFIG[state.currentLevel].nextLevel) {
+                    endGame(true, `¡Nivel ${state.currentLevel} completado! Prepárate para el Nivel ${LEVEL_CONFIG[state.currentLevel].nextLevel}.`);
+                } else {
+                    // Fin del juego si no hay más niveles
+                    endGame(true, `¡Has superado el nivel ${state.currentLevel}! Has completado todos los niveles.`);
+                }
+                return;
+            }
+
+            // 10. Actualizar vista
+            renderBoard();
+            updateScoreboard();
+        }
+
+        function renderBoard() {
+            boardElement.innerHTML = ''; 
+            const cells = [];
+            
+            // Crear el tablero de 8x8
+            for (let y = 0; y < BOARD_SIZE; y++) {
+                for (let x = 0; x < BOARD_SIZE; x++) {
+                    const cell = document.createElement('div');
+                    cell.className = `cell ${((x + y) % 2 === 0) ? 'light' : 'dark'}`;
+                    cell.dataset.x = x;
+                    cell.dataset.y = y;
+                    
+                    // Añadir el listener de clic para control táctil/mouse
+                    cell.addEventListener('click', () => handleCellClick(x, y)); 
+
+                    cells.push(cell);
+                    boardElement.appendChild(cell);
+                }
+            }
+
+            // Renderizar los obstáculos (NUEVO)
+            state.obstacles.forEach(obs => {
+                const cellIndex = obs.y * BOARD_SIZE + obs.x;
+                const cell = cells[cellIndex];
+                cell.classList.add('obstacle');
+                cell.innerHTML = PIECE_SYMBOLS.ROCK;
+            });
+
+
+            // Renderizar el cuerpo de la serpiente
+            state.snake.forEach((segment, index) => {
+                const cellIndex = segment.y * BOARD_SIZE + segment.x;
+                const cell = cells[cellIndex];
+                
+                // Quitar estilos de obstáculo si la serpiente pasa por ahí
+                cell.classList.remove('obstacle'); 
+                
+                if (index === 0) {
+                    cell.classList.add('snake-head');
+                } else {
+                    cell.classList.add('snake-body');
+                }
+                
+                cell.innerHTML = PIECE_SYMBOLS.PAWN; 
+                cell.classList.remove('collectible-piece');
+            });
+
+            // Renderizar las piezas coleccionables
+            state.collectiblePositions.forEach(piece => {
+                const cellIndex = piece.y * BOARD_SIZE + piece.x;
+                const cell = cells[cellIndex];
+                
+                // Asegurar que no dibujamos una pieza sobre la cabeza o el cuerpo (aunque no debería pasar)
+                if (cell.classList.contains('snake-head') || cell.classList.contains('snake-body')) return;
+                
+                cell.classList.add('collectible-piece');
+                cell.innerHTML = piece.type;
+
+                // Destacar la próxima pieza a recoger con color
+                const nextTargetType = state.pieceQueue[state.collectedCount];
+                if (piece.type === nextTargetType) {
+                    const icon = cell.querySelector('i');
+                    if(icon) icon.style.color = '#e53e3e'; // Rojo vivo
+                } else {
+                    const icon = cell.querySelector('i');
+                    if(icon) icon.style.color = '#333'; 
+                }
+            });
+        }
+
+        function updateScoreboard() {
+            levelDisplay.textContent = state.currentLevel; // NUEVO: Muestra el nivel
+            scoreDisplay.textContent = state.score;
+            
+            const nextTarget = state.pieceQueue[state.collectedCount];
+            
+            if (nextTarget) {
+                nextPieceDisplay.innerHTML = nextTarget;
+                const icon = nextPieceDisplay.querySelector('i');
+                if(icon) icon.style.color = '#e53e3e'; // Rojo vivo
+            } else {
+                nextPieceDisplay.innerHTML = '✅';
+                nextPieceDisplay.style.color = 'white';
+            }
+        }
+        
+        function showConfetti() {
+            const modalInner = gameOverModal.querySelector('.bg-white');
+            if (!modalInner) return;
+            
+            // Limpia confeti anterior
+            modalInner.querySelectorAll('.confetti-particle').forEach(p => p.remove());
+
+            for (let i = 0; i < 50; i++) {
+                const particle = document.createElement('div');
+                particle.classList.add('confetti-particle');
+                
+                const size = Math.random() * 8 + 4; 
+                const x = Math.random() * 100;
+                const color = ['#f6ad55', '#4299e1', '#38a169', '#ed64a6'][Math.floor(Math.random() * 4)];
+                
+                particle.style.cssText = `
+                    position: absolute;
+                    width: ${size}px;
+                    height: ${size}px;
+                    background-color: ${color};
+                    border-radius: 50%;
+                    top: -20px; 
+                    left: ${x}%;
+                    opacity: 0;
+                    transform: translateY(0) rotate(0deg);
+                    animation-delay: ${Math.random() * 0.5}s;
+                `;
+                modalInner.appendChild(particle);
+            }
+            
+            setTimeout(() => {
+                modalInner.querySelectorAll('.confetti-particle').forEach(p => p.remove());
+            }, 3000);
+        }
+
+        // Modificada para gestionar la transición de nivel
+        function endGame(isWin, message) {
+            state.isGameOver = true;
+            clearInterval(gameInterval);
+            
+            const finalScore = state.score;
+            
+            nextLevelButton.classList.add('hidden');
+            restartGameButton.classList.remove('hidden');
+            levelTransitionMessage.classList.add('hidden');
+            
+            if (isWin) {
+                const nextLevelId = LEVEL_CONFIG[state.currentLevel].nextLevel;
+                
+                if (nextLevelId) {
+                    // Victoria de Nivel
+                    playWinSound();
+                    gameResultTitle.textContent = `¡NIVEL ${state.currentLevel} SUPERADO!`;
+                    gameResultTitle.classList.remove('text-red-600');
+                    gameResultTitle.classList.add('text-green-600');
+                    levelTransitionMessage.textContent = `Prepárate para el Nivel ${nextLevelId} con nuevos obstáculos.`;
+                    levelTransitionMessage.classList.remove('hidden');
+                    nextLevelButton.classList.remove('hidden');
+                    restartGameButton.classList.add('hidden'); // Solo permite pasar al siguiente nivel
+                    showConfetti(); 
+                } else {
+                    // Victoria Final
+                    playWinSound();
+                    gameResultTitle.textContent = "¡VICTORIA TOTAL!";
+                    gameResultTitle.classList.remove('text-red-600');
+                    gameResultTitle.classList.add('text-green-600');
+                    gameMessage.textContent = message; // Mostrar mensaje de victoria final
+                    showConfetti();
+                }
+            } else {
+                // Derrota (por colisión o pieza incorrecta)
+                playGameOverSound();
+                gameResultTitle.textContent = "¡JUEGO TERMINADO!";
+                gameResultTitle.classList.remove('text-green-600');
+                gameResultTitle.classList.add('text-red-600');
+            }
+            
+            finalScoreDisplay.textContent = finalScore;
+            gameMessage.textContent = message;
+            gameOverModal.classList.remove('hidden');
+        }
+        
+        // --- FUNCIÓN: Pasa al siguiente nivel ---
+        function nextLevel() {
+            const nextLevelId = LEVEL_CONFIG[state.currentLevel].nextLevel;
+            if (nextLevelId) {
+                initGame(nextLevelId, true);
+            } else {
+                resetToStartScreen(); // Si no hay más niveles, vuelve al inicio
+            }
+        }
+
+        // --- FUNCIÓN: Reiniciar completamente y volver a la pantalla de inicio ---
+        function resetToStartScreen() {
+            isStarted = false; // Fuerza a initGame a mostrar el modal
+            state.score = 0; // Resetear puntuación total al volver al inicio
+            initGame(1, false);
+        }
+
+        // --- Inicialización y Event Listeners ---
+        window.onload = () => {
+            initGame(1);
+            document.addEventListener('keydown', handleKeyPress);
+        };
+        
+        // Exponer las funciones
+        window.startGame = startGame;
+        window.setDirection = setDirection;
+        window.togglePause = togglePause;
+        window.toggleSound = toggleSound;
+        window.toggleInstructions = toggleInstructions; 
+        window.initGame = initGame; 
+        window.resetToStartScreen = resetToStartScreen;
+        window.nextLevel = nextLevel; // Exponer la nueva función para pasar de nivel
+    </script>
+</body>
+</html>
